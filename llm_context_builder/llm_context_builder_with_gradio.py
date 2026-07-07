@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-app.py — یکپارچه‌ساز فایل‌های پروژه برای ورودی LLM (با رابط Gradio)
+app.py — Project File Aggregator for LLM Input (with Gradio UI)
 
-اجرا:
+Run:
     pip install gradio
     python app.py
 
-منطق اصلی (اسکن/فیلتر/توکن/chunk) عیناً از context_builder.py گرفته شده،
-فقط یک لایه‌ی نازک Gradio روش اضافه شده. کدهای دسته‌بندی/کپی فایل به
-پوشه‌های جدا (که در نسخه قبلی‌ت بود) حذف شده، چون هدف نهایی «یک متن واحد
-برای دادن به LLM» است، نه سازمان‌دهی فایل‌ها روی دیسک.
+Core logic (scan/filter/token/chunk) is taken verbatim from context_builder.py;
+only a thin Gradio layer has been added. The file categorization/copying code
+from the previous version has been removed, because the final goal is "a single
+text to give to the LLM", not file organisation on disk.
 """
 
 import hashlib
@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 import gradio as gr
 
 # ---------------------------------------------------------------------------
-# تنظیمات ثابت
+# Constants
 # ---------------------------------------------------------------------------
 
 IGNORE_DIRS_DEFAULT = (
@@ -50,17 +50,17 @@ LANGUAGE_MAP = {
 EXTENSION_CATEGORIES = {
     "Python": {".py"},
     "JS / TypeScript": {".js", ".jsx", ".ts", ".tsx"},
-    "وب (HTML/CSS)": {".html", ".css", ".scss"},
-    "تنظیمات / داده (JSON, YAML, ...)": {".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".xml", ".env"},
-    "مستندات (Markdown/Text)": {".md", ".txt", ".rst"},
-    "سایر زبان‌ها (Java, Go, C++, ...)": {".java", ".go", ".rb", ".php", ".c", ".cpp", ".cs", ".swift", ".kt", ".sql", ".sh"},
+    "Web (HTML/CSS)": {".html", ".css", ".scss"},
+    "Config / Data (JSON, YAML, ...)": {".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".xml", ".env"},
+    "Documentation (Markdown/Text)": {".md", ".txt", ".rst"},
+    "Other Languages (Java, Go, C++, ...)": {".java", ".go", ".rb", ".php", ".c", ".cpp", ".cs", ".swift", ".kt", ".sql", ".sh"},
 }
 
 CHARS_PER_TOKEN = 4.0
 
 
 # ---------------------------------------------------------------------------
-# منطق فیلتر کردن — همه‌جا فقط اینجا تعریف می‌شود
+# Filtering logic — defined here and used everywhere
 # ---------------------------------------------------------------------------
 
 def should_ignore_dir(dir_name: str, extra_ignore_dirs: set) -> bool:
@@ -87,7 +87,7 @@ def is_probably_binary(path: Path, blocksize: int = 2048) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# اسکن و خواندن
+# Scanning and reading
 # ---------------------------------------------------------------------------
 
 def scan_files(root: Path, extra_ignore_dirs: set, max_size_mb: float, allowed_ext):
@@ -130,7 +130,7 @@ def build_tree_text(root: Path, files) -> str:
         depth = len(rel.parts) - 1
         indent = "    " * depth
         lines.append(f"{indent}├── {rel.name}")
-    return "\n".join(lines) if lines else "(فایلی پیدا نشد)"
+    return "\n".join(lines) if lines else "(No files found)"
 
 
 def estimate_tokens(text: str) -> int:
@@ -142,12 +142,12 @@ def short_sha256(text: str) -> str:
 
 
 def xml_safe(text: str) -> str:
-    # جلوگیری از شکستن CDATA اگر خود محتوا شامل "]]>" باشد
+    # Prevent CDATA breakage if the content itself contains "]]>"
     return text.replace("]]>", "]]]]><![CDATA[>")
 
 
 # ---------------------------------------------------------------------------
-# ساخت خروجی (Markdown یا XML) + تقسیم بر اساس توکن
+# Build output (Markdown or XML) + split by token limit
 # ---------------------------------------------------------------------------
 
 def build_entries(root: Path, extra_ignore_dirs: set, max_size_mb: float,
@@ -174,7 +174,7 @@ def build_entries(root: Path, extra_ignore_dirs: set, max_size_mb: float,
 
 def build_header(root: Path, entries, tree_text: str) -> str:
     total_tokens = sum(e["tokens"] for e in entries)
-    languages = sorted({LANGUAGE_MAP.get(e["ext"], e["ext"] or "بدون‌پسوند") for e in entries})
+    languages = sorted({LANGUAGE_MAP.get(e["ext"], e["ext"] or "no_extension") for e in entries})
 
     lines = [
         "# PROJECT SUMMARY", "",
@@ -257,11 +257,11 @@ def build_output_parts(root: Path, extra_ignore_dirs: set, max_size_mb: float,
 
 
 # ---------------------------------------------------------------------------
-# توابع مربوط به رابط Gradio
+# Functions for the Gradio interface
 # ---------------------------------------------------------------------------
 
 def select_folder():
-    """تلاش برای باز کردن دیالوگ انتخاب پوشه (فقط وقتی برنامه لوکال اجرا می‌شود)."""
+    """Attempt to open a folder selection dialog (only works when running locally)."""
     try:
         import tkinter as tk
         from tkinter import filedialog
@@ -272,22 +272,22 @@ def select_folder():
         root.destroy()
         return folder if folder else ""
     except Exception:
-        return "⚠️ دیالوگ گرافیکی در دسترس نیست — مسیر را دستی وارد کنید."
+        return "⚠️ Graphical dialog not available — enter the path manually."
 
 
 def preview_tree(project_path, extra_ignore_dirs_text, max_size_mb):
     if not project_path or not Path(project_path).exists():
-        return "مسیر معتبر نیست."
+        return "Invalid path."
     root = Path(project_path).resolve()
     extra_ignore = {d.strip() for d in extra_ignore_dirs_text.split(",") if d.strip()}
     files = scan_files(root, extra_ignore, max_size_mb, allowed_ext=None)
-    return build_tree_text(root, files) or "(فایلی پیدا نشد)"
+    return build_tree_text(root, files) or "(No files found)"
 
 
 def run_build(project_path, categories, custom_ext_text, extra_ignore_dirs_text,
               output_format, max_tokens, max_size_mb, include_hash):
     if not project_path or not Path(project_path).exists():
-        return "❌ مسیر پروژه معتبر نیست.", "", "", []
+        return "❌ Invalid project path.", "", "", []
 
     root = Path(project_path).resolve()
     extra_ignore = {d.strip() for d in extra_ignore_dirs_text.split(",") if d.strip()}
@@ -299,7 +299,7 @@ def run_build(project_path, categories, custom_ext_text, extra_ignore_dirs_text,
         e = e.strip()
         if e:
             allowed_ext.add(e if e.startswith(".") else f".{e}")
-    allowed_ext = allowed_ext or None  # خالی = بدون فیلتر (همه فایل‌های متنی)
+    allowed_ext = allowed_ext or None  # empty = no filter (all text files)
 
     parts, entries, tree_text = build_output_parts(
         root=root,
@@ -322,59 +322,59 @@ def run_build(project_path, categories, custom_ext_text, extra_ignore_dirs_text,
 
     total_tokens = sum(e["tokens"] for e in entries)
     status = (
-        f"✅ {len(entries)} فایل یکپارچه شد در {len(parts)} فایل خروجی "
-        f"(~{total_tokens} توکن تقریبی)."
+        f"✅ Aggregated {len(entries)} files into {len(parts)} output file(s) "
+        f"(~{total_tokens} approximate tokens)."
     )
-    preview = parts[0][:3000] + ("\n\n... (ادامه در فایل خروجی) ..." if len(parts[0]) > 3000 else "")
+    preview = parts[0][:3000] + ("\n\n... (continued in output file) ..." if len(parts[0]) > 3000 else "")
     return status, tree_text, preview, out_files
 
 
 # ---------------------------------------------------------------------------
-# رابط Gradio
+# Gradio Interface
 # ---------------------------------------------------------------------------
 
-with gr.Blocks(title="یکپارچه‌ساز پروژه برای LLM") as demo:
+with gr.Blocks(title="Project Aggregator for LLM") as demo:
     gr.Markdown(
-        "## 🗂️ یکپارچه‌ساز فایل‌های پروژه برای LLM\n"
-        "فایل‌های متنی/کد پروژه را اسکن، فیلتر و در یک یا چند فایل خروجی "
-        "(به همراه خلاصه، درخت پروژه و شماره‌گذاری) آماده می‌کند تا مستقیم "
-        "به Claude / ChatGPT بدهی."
+        "## 🗂️ Project File Aggregator for LLM\n"
+        "Scan, filter, and combine text/code files from a project into one or more "
+        "output files (with summary, directory tree, and file indexing) ready to "
+        "feed directly to Claude / ChatGPT."
     )
 
     with gr.Row():
-        project_path = gr.Textbox(label="مسیر پوشه پروژه", scale=4,
+        project_path = gr.Textbox(label="Project folder path", scale=4,
                                    placeholder="/home/user/my-project")
-        browse_btn = gr.Button("انتخاب پوشه...", scale=1)
+        browse_btn = gr.Button("Browse...", scale=1)
 
     with gr.Row():
         categories = gr.CheckboxGroup(
             choices=list(EXTENSION_CATEGORIES.keys()),
-            label="فقط این دسته‌ها را شامل کن (خالی = همه فایل‌های متنی)",
+            label="Only include these categories (empty = all text files)",
         )
     with gr.Row():
         custom_ext = gr.Textbox(
-            label="پسوندهای دلخواه اضافه (با کاما جدا کن)",
+            label="Additional custom extensions (comma separated)",
             placeholder=".vue, .dart, .r"
         )
         extra_ignore_dirs = gr.Textbox(
-            label="پوشه‌های نادیده گرفته‌شده",
+            label="Directories to ignore",
             value=IGNORE_DIRS_DEFAULT,
         )
 
     with gr.Row():
-        output_format = gr.Radio(choices=["Markdown", "XML"], value="Markdown", label="فرمت خروجی")
-        max_tokens = gr.Number(value=0, label="حداکثر توکن هر بخش (۰ = بدون تقسیم)", precision=0)
-        max_size_mb = gr.Number(value=2.0, label="حداکثر حجم هر فایل (MB)")
-        include_hash = gr.Checkbox(value=False, label="افزودن sha256 به هر فایل")
+        output_format = gr.Radio(choices=["Markdown", "XML"], value="Markdown", label="Output format")
+        max_tokens = gr.Number(value=0, label="Max tokens per part (0 = no split)", precision=0)
+        max_size_mb = gr.Number(value=2.0, label="Max file size (MB)")
+        include_hash = gr.Checkbox(value=False, label="Include sha256 per file")
 
     with gr.Row():
-        preview_btn = gr.Button("👁️ پیش‌نمایش درخت پروژه")
-        run_btn = gr.Button("🚀 ساخت خروجی", variant="primary")
+        preview_btn = gr.Button("👁️ Preview project tree")
+        run_btn = gr.Button("🚀 Build output", variant="primary")
 
-    status_out = gr.Textbox(label="وضعیت", lines=2)
-    tree_out = gr.Textbox(label="🌳 درخت پروژه", lines=14)
-    preview_out = gr.Textbox(label="پیش‌نمایش خروجی (بخش اول)", lines=16)
-    files_out = gr.File(label="فایل‌های خروجی", file_count="multiple")
+    status_out = gr.Textbox(label="Status", lines=2)
+    tree_out = gr.Textbox(label="🌳 Project tree", lines=14)
+    preview_out = gr.Textbox(label="Output preview (first part)", lines=16)
+    files_out = gr.File(label="Output files", file_count="multiple")
 
     browse_btn.click(fn=select_folder, outputs=project_path)
     preview_btn.click(
